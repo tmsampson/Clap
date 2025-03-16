@@ -12,6 +12,11 @@ public class OptionAttribute(string name, bool required = false, string helpText
 
 public class Parser
 {
+	public Parser(object obj)
+	{
+		AddOptionsObject(obj);
+	}
+
 	internal class OptionDefinition
 	{
 		public required PropertyInfo Property { get; set; }
