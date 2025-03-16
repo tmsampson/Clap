@@ -7,7 +7,9 @@ Command Line Argument Parser
 A single-file, minimal C# command line argument parser which supports parsing to multiple option classes.
 
 ## Setup
+
 Create a simple class to hold command line options.
+
 ```csharp
 class MyOptions
 {
