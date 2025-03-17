@@ -3,11 +3,12 @@ using System.Reflection;
 namespace Clap;
 
 [AttributeUsage(AttributeTargets.Property)]
-public class OptionAttribute(string name, bool required = false, string helpText = "") : Attribute
+public class OptionAttribute(string name, bool required = false, string requiredUnless = "", string helpText = "") : Attribute
 {
 	public string? Name { get; set; } = name;
 	public bool Required { get; set; } = required;
 	public string? HelpText { get; set; } = helpText;
+	public string RequiredUnless { get; set; } = requiredUnless;
 }
 
 public class Parser
@@ -50,14 +51,19 @@ public class Parser
 
 	public bool Parse(string[] args)
 	{
-		// track which token indices we've consumed (for detecting unrecognized options)
+		// Track which token indices we've consumed (for detecting unrecognized options)
 		var usedIndices = new HashSet<int>();
 
-		// For each known option, look for its presence in the CLI args.
-		foreach (var option in _options)
+		// For each known option, look for its presence in the CLI args
+		foreach (OptionDefinition option in _options)
 		{
-			// Build the valid forms: --longName or -x
+			// Validate option
 			string longArg = "--" + option.Attribute.Name;
+			if(option.Attribute.Required && !string.IsNullOrEmpty(option.Attribute.RequiredUnless))
+			{
+				PrintError($"Error: option {longArg} cannot be both required and have a requiredUnless dependency.");
+				return false;
+			}
 
 			// Check if that argument is present
 			int index = Array.FindIndex(args, a => a == longArg);
@@ -117,14 +123,39 @@ public class Parser
 			}
 		}
 
-		// Check required options: if not specified at all, that's an error
-		foreach (var options in _options.Where(o => o.Attribute.Required))
+		// Mark RequiredUnless options as required if their dependencies weren't met
+		foreach (OptionDefinition option in _options)
 		{
-			if (!options.WasSpecified)
+			if (string.IsNullOrEmpty(option.Attribute.RequiredUnless))
 			{
-				PrintError($"Error: required option --{options.Attribute.Name} was not provided.");
+				continue;
+			}
+
+			string otherOptionName = option.Attribute.RequiredUnless;
+			var otherOption = _options.FirstOrDefault(o => o.Attribute.Name == otherOptionName);
+			if (otherOption == null)
+			{
+				PrintError($"Configuration error: --{option.Attribute.Name} references " +
+						$"invalid option --{otherOptionName}");
 				return false;
 			}
+
+			// If the other option wasn't specified, this one becomes required
+			if (!otherOption.WasSpecified && !option.WasSpecified)
+			{
+				option.Attribute.Required = true;
+			}
+		}
+
+		// Report any missing options
+		List<OptionDefinition> missingOptions = _options.Where(o => o.Attribute.Required && !o.WasSpecified).ToList();
+		if(missingOptions.Count > 0)
+		{
+			foreach (OptionDefinition option in missingOptions)
+			{
+				PrintError($"Error: required option --{option.Attribute.Name} was not provided.");
+			}
+			return false;
 		}
 
 		// Check for leftover unrecognized arguments
@@ -132,7 +163,6 @@ public class Parser
 		{
 			if (!usedIndices.Contains(i) && args[i].StartsWith("-"))
 			{
-				
 				PrintError($"Error: unrecognized option '{args[i]}'.");
 				return false;
 			}
@@ -150,8 +180,8 @@ public class Parser
 		Console.WriteLine("Options:");
 		const int indentWidth = 6;
 		int longestNameLength = _options.Where(o => !string.IsNullOrEmpty(o.Attribute?.Name))
-		                                 .Select(o => ("--" + o.Attribute.Name)?.Length)
-		                                 .DefaultIfEmpty(0).Max() ?? 12;
+										.Select(o => ("--" + o.Attribute.Name)?.Length)
+										.DefaultIfEmpty(0).Max() ?? 12;
 		foreach (var optDef in _options)
 		{
 			var attr = optDef.Attribute;
@@ -164,8 +194,8 @@ public class Parser
 
 	public static void PrintError(string error)
 	{
-		const string Red = "\u001b[31m";
-		Console.Error.WriteLine(Red + error);
+		const string Red = "\u001b[31m", Reset = "\u001b[0m";
+		Console.Error.WriteLine(Red + error + Reset);
 	}
 
 	/// <summary>
