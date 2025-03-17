@@ -96,7 +96,7 @@ public class Parser
 					int valIndex = index + 1;
 					if (valIndex >= args.Length || args[valIndex].StartsWith("-"))
 					{
-						Console.Error.WriteLine($"Error: option {longArg} needs a value.");
+						PrintError($"Error: option {longArg} needs a value.");
 						return false;
 					}
 					usedIndices.Add(valIndex);
@@ -109,7 +109,7 @@ public class Parser
 					}
 					else
 					{
-						Console.Error.WriteLine($"Error: cannot convert '{rawValue}' to {option.Property.PropertyType.Name} for {longArg}.");
+						PrintError($"Error: cannot convert '{rawValue}' to {option.Property.PropertyType.Name} for {longArg}.");
 						return false;
 					}
 
@@ -122,7 +122,7 @@ public class Parser
 		{
 			if (!options.WasSpecified)
 			{
-				Console.Error.WriteLine($"Error: required option --{options.Attribute.Name} was not provided.");
+				PrintError($"Error: required option --{options.Attribute.Name} was not provided.");
 				return false;
 			}
 		}
@@ -132,7 +132,8 @@ public class Parser
 		{
 			if (!usedIndices.Contains(i) && args[i].StartsWith("-"))
 			{
-				Console.Error.WriteLine($"Error: unrecognized option '{args[i]}'.");
+				
+				PrintError($"Error: unrecognized option '{args[i]}'.");
 				return false;
 			}
 		}
@@ -147,14 +148,24 @@ public class Parser
 	{
 		Console.WriteLine("Usage: app [options]");
 		Console.WriteLine("Options:");
+		const int indentWidth = 6;
+		int longestNameLength = _options.Where(o => !string.IsNullOrEmpty(o.Attribute?.Name))
+		                                 .Select(o => ("--" + o.Attribute.Name)?.Length)
+		                                 .DefaultIfEmpty(0).Max() ?? 12;
 		foreach (var optDef in _options)
 		{
 			var attr = optDef.Attribute;
 			string longName = $"--{attr.Name}";
-			string requiredText = attr.Required ? " (required)" : "";
-
-			Console.WriteLine($"  {longName}\t{attr.HelpText}{requiredText}");
+			string indent = new(' ', longestNameLength - longName.Length + indentWidth);
+			string requiredText = attr.Required ? " [required]" : "";
+			Console.WriteLine($"  {longName}{indent}{attr.HelpText}{requiredText}");
 		}
+	}
+
+	public static void PrintError(string error)
+	{
+		const string Red = "\u001b[31m";
+		Console.Error.WriteLine(Red + error);
 	}
 
 	/// <summary>
