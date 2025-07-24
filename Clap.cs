@@ -86,8 +86,8 @@ public class Parser
 						}
 						else
 						{
-							// If it's not "true"/"false", ignore and set "true"
-							option.Property.SetValue(option.Instance, true);
+							Console.Error.WriteLine($"Error: invalid boolean value '{args[index + 1]}' for option {longArg}. Expected 'true' or 'false'.");
+							return false;
 						}
 					}
 					else
