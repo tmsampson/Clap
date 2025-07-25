@@ -11,6 +11,27 @@ public class OptionAttribute(string name, bool required = false, string required
 	public string RequiredUnless { get; set; } = requiredUnless;
 }
 
+public class ParseRequest(string[] inputArgs)
+{
+	public string[] InputArgs = inputArgs;
+	public bool IgnoreUnrecognised { get; init; } = false;
+}
+
+public enum ParseStatus
+{
+	Failed,
+	Succeeded
+}
+
+public class ParseResult(ParseStatus status, ParseRequest request, HashSet<int> usedIndices)
+{
+	public readonly ParseStatus Status = status;
+	public readonly ParseRequest Request = request;
+	public readonly List<string> InputArgs = request.InputArgs.ToList();
+	public readonly List<string> ProcessedArgs = request.InputArgs.Where((item, index) => usedIndices.Contains(index)).ToList();
+	public readonly List<string> RemainingArgs = request.InputArgs.Where((item, index) => !usedIndices.Contains(index)).ToList();
+}
+
 public class Parser
 {
 	public Parser(object obj)
@@ -49,24 +70,31 @@ public class Parser
 		}
 	}
 
-	public bool Parse(string[] args)
+	public ParseResult Parse(string[] inputArgs)
+	{
+		ParseRequest request = new(inputArgs);
+		return Parse(request);
+	}
+
+	public ParseResult Parse(ParseRequest request)
 	{
 		// Track which token indices we've consumed (for detecting unrecognized options)
 		var usedIndices = new HashSet<int>();
+		ParseStatus status = ParseStatus.Succeeded;
 
 		// For each known option, look for its presence in the CLI args
 		foreach (OptionDefinition option in _options)
 		{
 			// Validate option
 			string longArg = "--" + option.Attribute.Name;
-			if(option.Attribute.Required && !string.IsNullOrEmpty(option.Attribute.RequiredUnless))
+			if (option.Attribute.Required && !string.IsNullOrEmpty(option.Attribute.RequiredUnless))
 			{
 				PrintError($"Error: option {longArg} cannot be both required and have a requiredUnless dependency.");
-				return false;
+				status = ParseStatus.Failed;
 			}
 
 			// Check if that argument is present
-			int index = Array.FindIndex(args, a => a == longArg);
+			int index = Array.FindIndex(request.InputArgs, a => a == longArg);
 			if (index >= 0)
 			{
 				usedIndices.Add(index);
@@ -77,17 +105,17 @@ public class Parser
 				{
 					// Look ahead to see if the user typed "true"/"false"
 					// e.g. "--silent false"
-					if (index + 1 < args.Length && !args[index + 1].StartsWith("-"))
+					if (index + 1 < request.InputArgs.Length && !request.InputArgs[index + 1].StartsWith("-"))
 					{
-						if (bool.TryParse(args[index + 1], out bool boolVal))
+						if (bool.TryParse(request.InputArgs[index + 1], out bool boolVal))
 						{
 							option.Property.SetValue(option.Instance, boolVal);
 							usedIndices.Add(index + 1);
 						}
 						else
 						{
-							Console.Error.WriteLine($"Error: invalid boolean value '{args[index + 1]}' for option {longArg}. Expected 'true' or 'false'.");
-							return false;
+							Console.Error.WriteLine($"Error: invalid boolean value '{request.InputArgs[index + 1]}' for option {longArg}. Expected 'true' or 'false'.");
+							status = ParseStatus.Failed;
 						}
 					}
 					else
@@ -100,14 +128,14 @@ public class Parser
 				{
 					// For non-bool, we expect the next token to be the value
 					int valIndex = index + 1;
-					if (valIndex >= args.Length || args[valIndex].StartsWith("-"))
+					if (valIndex >= request.InputArgs.Length || request.InputArgs[valIndex].StartsWith("-"))
 					{
 						PrintError($"Error: option {longArg} needs a value.");
-						return false;
+						status = ParseStatus.Failed;
 					}
 					usedIndices.Add(valIndex);
 
-					string rawValue = args[valIndex];
+					string rawValue = request.InputArgs[valIndex];
 					object? converted = ConvertValue(rawValue, option.Property.PropertyType);
 					if (converted != null)
 					{
@@ -116,9 +144,8 @@ public class Parser
 					else
 					{
 						PrintError($"Error: cannot convert '{rawValue}' to {option.Property.PropertyType.Name} for {longArg}.");
-						return false;
+						status = ParseStatus.Failed;
 					}
-
 				}
 			}
 		}
@@ -137,38 +164,41 @@ public class Parser
 			{
 				PrintError($"Configuration error: --{option.Attribute.Name} references " +
 						$"invalid option --{otherOptionName}");
-				return false;
+				status = ParseStatus.Failed;
 			}
-
-			// If the other option wasn't specified, this one becomes required
-			if (!otherOption.WasSpecified && !option.WasSpecified)
+			else if (!otherOption.WasSpecified && !option.WasSpecified)
 			{
+				// If the other option wasn't specified, this one becomes required
 				option.Attribute.Required = true;
 			}
 		}
 
 		// Report any missing options
 		List<OptionDefinition> missingOptions = _options.Where(o => o.Attribute.Required && !o.WasSpecified).ToList();
-		if(missingOptions.Count > 0)
+		if (missingOptions.Count > 0)
 		{
 			foreach (OptionDefinition option in missingOptions)
 			{
 				PrintError($"Error: required option --{option.Attribute.Name} was not provided.");
+				status = ParseStatus.Failed;
 			}
-			return false;
 		}
 
 		// Check for leftover unrecognized arguments
-		for (int i = 0; i < args.Length; i++)
+		if (!request.IgnoreUnrecognised)
 		{
-			if (!usedIndices.Contains(i) && args[i].StartsWith("-"))
+			for (int i = 0; i < request.InputArgs.Length; i++)
 			{
-				PrintError($"Error: unrecognized option '{args[i]}'.");
-				return false;
+				if (!usedIndices.Contains(i) && request.InputArgs[i].StartsWith('-'))
+				{
+					PrintError($"Error: unrecognized option '{request.InputArgs[i]}'.");
+					status = ParseStatus.Failed;
+				}
 			}
 		}
 
-		return true; // success
+		// Success
+		return new(status, request, usedIndices);
 	}
 
 	/// <summary>
