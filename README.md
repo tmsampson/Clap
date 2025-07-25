@@ -30,7 +30,8 @@ Basic parsing example.
 MyOptions _options = new();
 
 Clap.Parser parser = new(_options);
-if(!parser.Parse(Environment.GetCommandLineArgs()))
+Clap.ParseResult result = parser.Parse(Environment.GetCommandLineArgs());
+if (result.Status == Clap.ParseStatus.Failed)
 {
     parser.PrintUsage();
     return false;
@@ -47,7 +48,8 @@ MyOptionsB _optionsB = new();
 
 Clap.Parser parser = new(_optionsA);
 parser.AddOptionsObject(_optionsB);
-if(!parser.Parse(Environment.GetCommandLineArgs()))
+Clap.ParseResult result = parser.Parse(Environment.GetCommandLineArgs());
+if (result.Status == Clap.ParseStatus.Failed)
 {
     parser.PrintUsage();
     return false;
