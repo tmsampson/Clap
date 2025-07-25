@@ -11,10 +11,16 @@ public class OptionAttribute() : Attribute
 	public string? RequiredUnless { get; set; } = null;
 }
 
-public class ParseRequest(string[] inputArgs)
+public class ParseRequest()
 {
-	public string[] InputArgs = inputArgs;
+	public required string[] InputArgs { get; init; }
+	public required List<object> TargetObjects { get; init; }
+}
+
+public class ParseOptions()
+{
 	public bool IgnoreUnrecognised { get; init; } = false;
+	public readonly static ParseOptions Default = new();
 }
 
 public enum ParseStatus
@@ -34,12 +40,37 @@ public class ParseResult(ParseStatus status, ParseRequest request, HashSet<int> 
 
 public class Parser
 {
-	public Parser(object obj)
+	private readonly ParseRequest _request;
+	private readonly List<TargetProperty> _targetProperties = [];
+
+	public Parser(ParseRequest request)
 	{
-		AddOptionsObject(obj);
+		// Store request
+		_request = request;
+
+		// Process request and extract target properties
+		foreach (object targetObject in request.TargetObjects)
+		{
+			Type type = targetObject.GetType();
+			PropertyInfo[] targetObjectProperties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+			foreach (PropertyInfo? property in targetObjectProperties)
+			{
+				var optionAttribute = property.GetCustomAttribute<OptionAttribute>();
+				if (optionAttribute != null)
+				{
+					_targetProperties.Add(new TargetProperty
+					{
+						Instance = targetObject,
+						Attribute = optionAttribute,
+						Property = property,
+						WasSpecified = false
+					});
+				}
+			}
+		}
 	}
 
-	internal class OptionDefinition
+	internal class TargetProperty
 	{
 		public required PropertyInfo Property { get; set; }
 		public required OptionAttribute Attribute { get; set; }
@@ -52,43 +83,19 @@ public class Parser
 		}
 	}
 
-	private readonly List<OptionDefinition> _options = [];
-
-	public void AddOptionsObject(object obj)
+	public ParseResult Parse()
 	{
-		var type = obj.GetType();
-		var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-		foreach (var prop in props)
-		{
-			var attr = prop.GetCustomAttribute<OptionAttribute>();
-			if (attr != null)
-			{
-				_options.Add(new OptionDefinition
-				{
-					Property = prop,
-					Attribute = attr,
-					Instance = obj,
-					WasSpecified = false
-				});
-			}
-		}
+		return Parse(ParseOptions.Default);
 	}
 
-	public ParseResult Parse(string[] inputArgs)
-	{
-		ParseRequest request = new(inputArgs);
-		return Parse(request);
-	}
-
-	public ParseResult Parse(ParseRequest request)
+	public ParseResult Parse(ParseOptions parseOptions)
 	{
 		// Track which token indices we've consumed (for detecting unrecognized options)
 		var usedIndices = new HashSet<int>();
 		ParseStatus status = ParseStatus.Succeeded;
 
 		// For each known option, look for its presence in the CLI args
-		foreach (OptionDefinition option in _options)
+		foreach (TargetProperty option in _targetProperties)
 		{
 			// Validate option
 			string longArg = option.GetLongArg();
@@ -99,7 +106,7 @@ public class Parser
 			}
 
 			// Check if that argument is present
-			int index = Array.FindIndex(request.InputArgs, a => string.Equals(a, longArg, StringComparison.OrdinalIgnoreCase));
+			int index = Array.FindIndex(_request.InputArgs, a => string.Equals(a, longArg, StringComparison.OrdinalIgnoreCase));
 			if (index >= 0)
 			{
 				usedIndices.Add(index);
@@ -110,16 +117,16 @@ public class Parser
 				{
 					// Look ahead to see if the user typed "true"/"false"
 					// e.g. "--silent false"
-					if (index + 1 < request.InputArgs.Length && !request.InputArgs[index + 1].StartsWith("-"))
+					if (index + 1 < _request.InputArgs.Length && !_request.InputArgs[index + 1].StartsWith("-"))
 					{
-						if (bool.TryParse(request.InputArgs[index + 1], out bool boolVal))
+						if (bool.TryParse(_request.InputArgs[index + 1], out bool boolVal))
 						{
 							option.Property.SetValue(option.Instance, boolVal);
 							usedIndices.Add(index + 1);
 						}
 						else
 						{
-							Console.Error.WriteLine($"Error: invalid boolean value '{request.InputArgs[index + 1]}' for option {longArg}. Expected 'true' or 'false'.");
+							Console.Error.WriteLine($"Error: invalid boolean value '{_request.InputArgs[index + 1]}' for option {longArg}. Expected 'true' or 'false'.");
 							status = ParseStatus.Failed;
 						}
 					}
@@ -133,14 +140,14 @@ public class Parser
 				{
 					// For non-bool, we expect the next token to be the value
 					int valIndex = index + 1;
-					if (valIndex >= request.InputArgs.Length || request.InputArgs[valIndex].StartsWith("-"))
+					if (valIndex >= _request.InputArgs.Length || _request.InputArgs[valIndex].StartsWith("-"))
 					{
 						PrintError($"Error: option {longArg} needs a value.");
 						status = ParseStatus.Failed;
 					}
 					usedIndices.Add(valIndex);
 
-					string rawValue = request.InputArgs[valIndex];
+					string rawValue = _request.InputArgs[valIndex];
 					object? converted = ConvertValue(rawValue, option.Property.PropertyType);
 					if (converted != null)
 					{
@@ -156,7 +163,7 @@ public class Parser
 		}
 
 		// Mark RequiredUnless options as required if their dependencies weren't met
-		foreach (OptionDefinition option in _options)
+		foreach (TargetProperty option in _targetProperties)
 		{
 			if (string.IsNullOrEmpty(option.Attribute.RequiredUnless))
 			{
@@ -164,7 +171,7 @@ public class Parser
 			}
 
 			string otherOptionName = option.Attribute.RequiredUnless;
-			var otherOption = _options.FirstOrDefault(o => o.Attribute.Name == otherOptionName);
+			var otherOption = _targetProperties.FirstOrDefault(o => o.Attribute.Name == otherOptionName);
 			if (otherOption == null)
 			{
 				PrintError($"Configuration error: --{option.Attribute.Name} references " +
@@ -179,10 +186,10 @@ public class Parser
 		}
 
 		// Report any missing options
-		List<OptionDefinition> missingOptions = _options.Where(o => o.Attribute.Required && !o.WasSpecified).ToList();
+		List<TargetProperty> missingOptions = _targetProperties.Where(o => o.Attribute.Required && !o.WasSpecified).ToList();
 		if (missingOptions.Count > 0)
 		{
-			foreach (OptionDefinition option in missingOptions)
+			foreach (TargetProperty option in missingOptions)
 			{
 				PrintError($"Error: required option --{option.Attribute.Name} was not provided.");
 				status = ParseStatus.Failed;
@@ -190,20 +197,20 @@ public class Parser
 		}
 
 		// Check for leftover unrecognized arguments
-		if (!request.IgnoreUnrecognised)
+		if (!parseOptions.IgnoreUnrecognised)
 		{
-			for (int i = 0; i < request.InputArgs.Length; i++)
+			for (int i = 0; i < _request.InputArgs.Length; i++)
 			{
-				if (!usedIndices.Contains(i) && request.InputArgs[i].StartsWith('-'))
+				if (!usedIndices.Contains(i) && _request.InputArgs[i].StartsWith('-'))
 				{
-					PrintError($"Error: unrecognized option '{request.InputArgs[i]}'.");
+					PrintError($"Error: unrecognized option '{_request.InputArgs[i]}'.");
 					status = ParseStatus.Failed;
 				}
 			}
 		}
 
 		// Success
-		return new(status, request, usedIndices);
+		return new(status, _request, usedIndices);
 	}
 
 	/// <summary>
@@ -214,10 +221,10 @@ public class Parser
 		Console.WriteLine("Usage: app [options]");
 		Console.WriteLine("Options:");
 		const int indentWidth = 6;
-		int longestNameLength = _options.Where(o => !string.IsNullOrEmpty(o.Attribute?.Name))
+		int longestNameLength = _targetProperties.Where(o => !string.IsNullOrEmpty(o.Attribute?.Name))
 										.Select(o => ("--" + o.Attribute.Name)?.Length)
 										.DefaultIfEmpty(0).Max() ?? 12;
-		foreach (var optDef in _options)
+		foreach (var optDef in _targetProperties)
 		{
 			var attr = optDef.Attribute;
 			string longName = $"--{attr.Name}";
