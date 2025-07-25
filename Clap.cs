@@ -3,12 +3,12 @@ using System.Reflection;
 namespace Clap;
 
 [AttributeUsage(AttributeTargets.Property)]
-public class OptionAttribute(string name, bool required = false, string requiredUnless = "", string helpText = "") : Attribute
+public class OptionAttribute() : Attribute
 {
-	public string? Name { get; set; } = name;
-	public bool Required { get; set; } = required;
-	public string? HelpText { get; set; } = helpText;
-	public string RequiredUnless { get; set; } = requiredUnless;
+	public string? Name { get; set; } = null;
+	public bool Required { get; set; } = false;
+	public string? Description { get; set; } = null;
+	public string? RequiredUnless { get; set; } = null;
 }
 
 public class ParseRequest(string[] inputArgs)
@@ -45,6 +45,11 @@ public class Parser
 		public required OptionAttribute Attribute { get; set; }
 		public required object Instance { get; set; }
 		public bool WasSpecified { get; set; } = false;
+		public string GetLongArg()
+		{
+			string longArgName = Attribute.Name ?? Property.Name;
+			return $"--{longArgName}";
+		}
 	}
 
 	private readonly List<OptionDefinition> _options = [];
@@ -86,7 +91,7 @@ public class Parser
 		foreach (OptionDefinition option in _options)
 		{
 			// Validate option
-			string longArg = "--" + option.Attribute.Name;
+			string longArg = option.GetLongArg();
 			if (option.Attribute.Required && !string.IsNullOrEmpty(option.Attribute.RequiredUnless))
 			{
 				PrintError($"Error: option {longArg} cannot be both required and have a requiredUnless dependency.");
@@ -94,7 +99,7 @@ public class Parser
 			}
 
 			// Check if that argument is present
-			int index = Array.FindIndex(request.InputArgs, a => a == longArg);
+			int index = Array.FindIndex(request.InputArgs, a => string.Equals(a, longArg, StringComparison.OrdinalIgnoreCase));
 			if (index >= 0)
 			{
 				usedIndices.Add(index);
@@ -218,7 +223,7 @@ public class Parser
 			string longName = $"--{attr.Name}";
 			string indent = new(' ', longestNameLength - longName.Length + indentWidth);
 			string requiredText = attr.Required ? " [required]" : "";
-			Console.WriteLine($"  {longName}{indent}{attr.HelpText}{requiredText}");
+			Console.WriteLine($"  {longName}{indent}{attr.Description}{requiredText}");
 		}
 	}
 
