@@ -52,7 +52,7 @@ public class Parser
 		foreach (object targetObject in request.TargetObjects)
 		{
 			Type type = targetObject.GetType();
-			PropertyInfo[] targetObjectProperties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+			PropertyInfo[] targetObjectProperties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 			foreach (PropertyInfo? property in targetObjectProperties)
 			{
 				var optionAttribute = property.GetCustomAttribute<OptionAttribute>();
@@ -174,7 +174,7 @@ public class Parser
 			var otherOption = _targetProperties.FirstOrDefault(o => o.Attribute.Name == otherOptionName);
 			if (otherOption == null)
 			{
-				PrintError($"Configuration error: --{option.Attribute.Name} references " +
+				PrintError($"Configuration error: {option.GetLongArg()} references " +
 						$"invalid option --{otherOptionName}");
 				status = ParseStatus.Failed;
 			}
@@ -191,7 +191,7 @@ public class Parser
 		{
 			foreach (TargetProperty option in missingOptions)
 			{
-				PrintError($"Error: required option --{option.Attribute.Name} was not provided.");
+				PrintError($"Error: required option {option.GetLongArg()} was not provided.");
 				status = ParseStatus.Failed;
 			}
 		}
@@ -221,16 +221,15 @@ public class Parser
 		Console.WriteLine("Usage: app [options]");
 		Console.WriteLine("Options:");
 		const int indentWidth = 6;
-		int longestNameLength = _targetProperties.Where(o => !string.IsNullOrEmpty(o.Attribute?.Name))
-										.Select(o => ("--" + o.Attribute.Name)?.Length)
-										.DefaultIfEmpty(0).Max() ?? 12;
-		foreach (var optDef in _targetProperties)
+		int longestNameLength = _targetProperties.Select(o => o.GetLongArg().Length).DefaultIfEmpty(0).Max();
+		foreach (var targetProperty in _targetProperties)
 		{
-			var attr = optDef.Attribute;
-			string longName = $"--{attr.Name}";
+			string targetPropertyLongArg = targetProperty.GetLongArg();
+			OptionAttribute targetPropertyAttribute = targetProperty.Attribute;
+			string longName = $"--{targetPropertyLongArg}";
 			string indent = new(' ', longestNameLength - longName.Length + indentWidth);
-			string requiredText = attr.Required ? " [required]" : "";
-			Console.WriteLine($"  {longName}{indent}{attr.Description}{requiredText}");
+			string requiredText = targetPropertyAttribute.Required ? " [required]" : "";
+			Console.WriteLine($"  {longName}{indent}{targetPropertyAttribute.Description}{requiredText}");
 		}
 	}
 
