@@ -233,7 +233,7 @@ public class Parser
 		}
 	}
 
-	public static void PrintError(string error)
+	private static void PrintError(string error)
 	{
 		const string Red = "\u001b[31m", Reset = "\u001b[0m";
 		Console.Error.WriteLine(Red + error + Reset);
